@@ -1,0 +1,10 @@
+faiss-cpu 
+sentence-transformers 
+PyPDF2 
+python-docx 
+python-pptx 
+streamlit 
+ollama 
+numpy
+streamlit-lottie
+requests
