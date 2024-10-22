@@ -95,13 +95,12 @@ def index_documents(directory):
 
 # Function to read document chunk
 def read_document_chunk(file_path, chunk_id):
-    global documents_path  # Add this line to use the global documents_path
+    global documents_path 
     print(f"Reading document chunk: {file_path}, chunk_id: {chunk_id}")
     content = ""
     
-    # Try to find the file using the original path
+    
     if not os.path.exists(file_path):
-        # If not found, try to find it in the current documents_path
         base_name = os.path.basename(file_path)
         new_path = os.path.join(documents_path, base_name)
         if os.path.exists(new_path):
