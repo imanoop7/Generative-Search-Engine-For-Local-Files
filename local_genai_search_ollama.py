@@ -52,6 +52,7 @@ def index_documents(directory):
     print(f"Indexing documents in directory: {directory}")
     global metadata
     documents = []
+    metadata = []  # Reset metadata
     
     for root, _, files in os.walk(directory):
         for file in files:
@@ -59,13 +60,13 @@ def index_documents(directory):
             print(f"Processing file: {file_path}")
             content = ""
             
-            if file.endswith('.pdf'):
+            if file.lower().endswith('.pdf'):
                 content = read_pdf(file_path)
-            elif file.endswith('.docx'):
+            elif file.lower().endswith('.docx'):
                 content = read_docx(file_path)
-            elif file.endswith('.pptx'):
+            elif file.lower().endswith('.pptx'):
                 content = read_pptx(file_path)
-            elif file.endswith('.txt'):
+            elif file.lower().endswith('.txt'):
                 with open(file_path, 'r', encoding='utf-8') as f:
                     content = f.read()
             
@@ -73,7 +74,7 @@ def index_documents(directory):
                 chunks = chunk_text(content)
                 for i, chunk in enumerate(chunks):
                     documents.append(chunk)
-                    metadata.append({"path": file_path, "chunk_id": i})
+                    metadata.append({"path": os.path.abspath(file_path), "chunk_id": i})
     
     print(f"Encoding {len(documents)} document chunks")
     embeddings = [embed_text(doc) for doc in documents]
@@ -191,7 +192,9 @@ def main():
         st_lottie(lottie_json, height=150, key="coding")
 
     # Input for documents path
-    documents_path = st.text_input("📁 Enter the path to your documents folder:", "Folder Path")
+    documents_path = st.text_input("📁 Enter the path to your documents folder:", "")
+    if documents_path:
+        documents_path = os.path.abspath(documents_path)
     
     # Check if documents are indexed
     if not os.path.exists("document_index.faiss"):

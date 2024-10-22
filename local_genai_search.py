@@ -98,7 +98,7 @@ def read_document_chunk(file_path, chunk_id):
         content = read_pdf(file_path)
     elif file_path.endswith('.docx'):
         content = read_docx(file_path)
-    elif file.endswith('.txt'):
+    elif file_path.endswith('.txt'):
         with open(file_path, 'r', encoding='utf-8') as f:
             content = f.read()
     
@@ -238,10 +238,14 @@ def main():
                 print(f"Displaying {len(referenced_ids)} referenced documents")
                 for doc_id in referenced_ids:
                     doc = search_results[doc_id]
-                    with st.expander(f"📄 Document {doc_id} - {os.path.basename(doc['path'])}"):
-                        st.write(doc['content'])
-                        with open(doc['path'], 'rb') as f:
-                            st.download_button("⬇️ Download file", f, file_name=os.path.basename(doc['path']))
+                    full_path = os.path.join(documents_path, os.path.basename(doc['path']))
+                    if os.path.exists(full_path):
+                        with st.expander(f"📄 Document {doc_id} - {os.path.basename(doc['path'])}"):
+                            st.write(doc['content'])
+                            with open(full_path, 'rb') as f:
+                                st.download_button("⬇️ Download file", f, file_name=os.path.basename(doc['path']))
+                    else:
+                        st.warning(f"⚠️ File not found: {full_path}")
         else:
             st.warning("⚠️ Please enter a question before clicking 'Search and Answer'.")
 
