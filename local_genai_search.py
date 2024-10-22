@@ -19,6 +19,7 @@ model = SentenceTransformer('sentence-transformers/msmarco-bert-base-dot-v5')
 dimension = 768
 index = faiss.IndexFlatIP(dimension)
 metadata = []
+documents_path = ""  # Add this line to define documents_path globally
 
 print(f"Initialized model and FAISS index with dimension {dimension}")
 
@@ -52,8 +53,10 @@ def chunk_text(text, chunk_size=500, overlap=50):
 # Indexing function
 def index_documents(directory):
     print(f"Indexing documents in directory: {directory}")
-    global metadata
+    global metadata, index
+    metadata = []  # Reset metadata
     documents = []
+    index = faiss.IndexFlatIP(dimension)  # Reset the index
     
     for root, _, files in os.walk(directory):
         for file in files:
@@ -61,13 +64,13 @@ def index_documents(directory):
             print(f"Processing file: {file_path}")
             content = ""
             
-            if file.endswith('.pdf'):
+            if file.lower().endswith('.pdf'):
                 content = read_pdf(file_path)
-            elif file.endswith('.docx'):
+            elif file.lower().endswith('.docx'):
                 content = read_docx(file_path)
-            elif file.endswith('.pptx'):
+            elif file.lower().endswith('.pptx'):
                 content = read_pptx(file_path)
-            elif file.endswith('.txt'):
+            elif file.lower().endswith('.txt'):
                 with open(file_path, 'r', encoding='utf-8') as f:
                     content = f.read()
             
@@ -92,12 +95,27 @@ def index_documents(directory):
 
 # Function to read document chunk
 def read_document_chunk(file_path, chunk_id):
+    global documents_path  # Add this line to use the global documents_path
     print(f"Reading document chunk: {file_path}, chunk_id: {chunk_id}")
     content = ""
+    
+    # Try to find the file using the original path
+    if not os.path.exists(file_path):
+        # If not found, try to find it in the current documents_path
+        base_name = os.path.basename(file_path)
+        new_path = os.path.join(documents_path, base_name)
+        if os.path.exists(new_path):
+            file_path = new_path
+        else:
+            print(f"File not found: {file_path}")
+            return f"[Content not available for {base_name}]"
+    
     if file_path.endswith('.pdf'):
         content = read_pdf(file_path)
     elif file_path.endswith('.docx'):
         content = read_docx(file_path)
+    elif file_path.endswith('.pptx'):
+        content = read_pptx(file_path)
     elif file_path.endswith('.txt'):
         with open(file_path, 'r', encoding='utf-8') as f:
             content = f.read()
@@ -150,6 +168,7 @@ def load_lottieurl(url: str):
 
 # Streamlit UI
 def main():
+    global documents_path, index, metadata
     print("Starting Streamlit UI")
     
     # Page config
@@ -188,26 +207,29 @@ def main():
         st_lottie(lottie_json, height=150, key="coding")
 
     # Input for documents path
-    documents_path = st.text_input("📁 Enter the path to your documents folder:", "Folder Path")
-    
-    # Check if documents are indexed
-    if not os.path.exists("document_index.faiss"):
-        st.warning("⚠️ Documents are not indexed. Please run the indexing process first.")
+    new_documents_path = st.text_input("📁 Enter the path to your documents folder:", "")
+    if new_documents_path and new_documents_path != documents_path:
+        documents_path = os.path.abspath(new_documents_path)
+        # Reset index and metadata
+        index = faiss.IndexFlatIP(dimension)
+        metadata = []
         if st.button("🚀 Index Documents"):
             with st.spinner("Indexing documents... This may take a while."):
                 print(f"Indexing documents in {documents_path}")
                 index_documents(documents_path)
             st.success("✅ Indexing complete!")
-            st.experimental_rerun()  # Rerun the app after indexing
-
-    # Load index and metadata if not already loaded
-    global index, metadata
-    if len(metadata) == 0:
-        print("Loading FAISS index and metadata")
-        index = faiss.read_index("document_index.faiss")
-        with open("metadata.json", "r") as f:
-            metadata = json.load(f)
-        print(f"Loaded index with {index.ntotal} vectors and {len(metadata)} metadata entries")
+            st.rerun()  # Use st.rerun() instead of st.experimental_rerun()
+    
+    # Load index and metadata if they exist
+    if os.path.exists("document_index.faiss") and os.path.exists("metadata.json"):
+        if len(metadata) == 0:
+            print("Loading FAISS index and metadata")
+            index = faiss.read_index("document_index.faiss")
+            with open("metadata.json", "r") as f:
+                metadata = json.load(f)
+            print(f"Loaded index with {index.ntotal} vectors and {len(metadata)} metadata entries")
+    else:
+        st.warning("⚠️ Documents are not indexed. Please enter a folder path and click 'Index Documents'.")
     
     st.markdown("---")
     st.markdown("## Ask a Question")
