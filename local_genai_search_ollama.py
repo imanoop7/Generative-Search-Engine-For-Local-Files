@@ -238,14 +238,21 @@ def main():
                 
                 # Display referenced documents
                 st.markdown("### 📚 Referenced Documents:")
-                rege = re.compile(r"\[Document\s+[0-9]+\]|\[[0-9]+\]")
-                referenced_ids = [int(s) for s in re.findall(r'\b\d+\b', ' '.join(rege.findall(answer)))]
-                
+                referenced_ids = set()
+                for match in re.finditer(r'\[(\d+)\]', answer):
+                    try:
+                        doc_id = int(match.group(1))
+                        if doc_id < len(search_results):
+                            referenced_ids.add(doc_id)
+                    except ValueError:
+                        continue
+
                 print(f"Displaying {len(referenced_ids)} referenced documents")
                 for doc_id in referenced_ids:
                     doc = search_results[doc_id]
                     with st.expander(f"📄 Document {doc_id} - {os.path.basename(doc['path'])}"):
                         st.write(doc['content'])
+                        st.write(f"Source: {doc['path']}")
                         with open(doc['path'], 'rb') as f:
                             st.download_button("⬇️ Download file", f, file_name=os.path.basename(doc['path']))
         else:
