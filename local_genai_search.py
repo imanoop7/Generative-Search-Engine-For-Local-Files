@@ -19,11 +19,10 @@ model = SentenceTransformer('sentence-transformers/msmarco-bert-base-dot-v5')
 dimension = 768
 index = faiss.IndexFlatIP(dimension)
 metadata = []
-documents_path = ""  # Add this line to define documents_path globally
+documents_path = ""
 
 print(f"Initialized model and FAISS index with dimension {dimension}")
 
-# Document reading functions
 def read_pdf(file_path):
     print(f"Reading PDF: {file_path}")
     with open(file_path, 'rb') as file:
@@ -50,7 +49,6 @@ def chunk_text(text, chunk_size=500, overlap=50):
     print(f"Created {len(chunks)} chunks")
     return chunks
 
-# Indexing function
 def index_documents(directory):
     print(f"Indexing documents in directory: {directory}")
     global metadata, index
@@ -58,7 +56,10 @@ def index_documents(directory):
     documents = []
     index = faiss.IndexFlatIP(dimension)  # Reset the index
     
-    for root, _, files in os.walk(directory):
+    # Convert to absolute path
+    abs_directory = os.path.abspath(directory)
+    
+    for root, _, files in os.walk(abs_directory):
         for file in files:
             file_path = os.path.join(root, file)
             print(f"Processing file: {file_path}")
@@ -78,7 +79,14 @@ def index_documents(directory):
                 chunks = chunk_text(content)
                 for i, chunk in enumerate(chunks):
                     documents.append(chunk)
-                    metadata.append({"path": file_path, "chunk_id": i})
+                    # Store both absolute and relative paths
+                    rel_path = os.path.relpath(file_path, abs_directory)
+                    metadata.append({
+                        "abs_path": file_path,
+                        "rel_path": rel_path,
+                        "chunk_id": i,
+                        "base_dir": abs_directory
+                    })
     
     print(f"Encoding {len(documents)} document chunks")
     embeddings = model.encode(documents)
@@ -93,21 +101,31 @@ def index_documents(directory):
     
     print(f"Indexed {len(documents)} document chunks.")
 
-# Function to read document chunk
 def read_document_chunk(file_path, chunk_id):
-    global documents_path 
     print(f"Reading document chunk: {file_path}, chunk_id: {chunk_id}")
     content = ""
     
+    # Find the metadata entry for this file
+    matching_meta = None
+    for meta in metadata:
+        if meta["abs_path"] == file_path or meta["rel_path"] == os.path.basename(file_path):
+            matching_meta = meta
+            break
     
-    if not os.path.exists(file_path):
-        base_name = os.path.basename(file_path)
-        new_path = os.path.join(documents_path, base_name)
-        if os.path.exists(new_path):
-            file_path = new_path
+    if matching_meta:
+        # Try both absolute path and reconstructed path
+        try_paths = [
+            matching_meta["abs_path"],
+            os.path.join(matching_meta["base_dir"], matching_meta["rel_path"])
+        ]
+        
+        for try_path in try_paths:
+            if os.path.exists(try_path):
+                file_path = try_path
+                break
         else:
             print(f"File not found: {file_path}")
-            return f"[Content not available for {base_name}]"
+            return f"[Content not available for {os.path.basename(file_path)}]"
     
     if file_path.endswith('.pdf'):
         content = read_pdf(file_path)
@@ -122,7 +140,6 @@ def read_document_chunk(file_path, chunk_id):
     chunks = chunk_text(content)
     return chunks[chunk_id] if chunk_id < len(chunks) else ""
 
-# Search function
 def semantic_search(query, k=10):
     print(f"Performing semantic search for query: '{query}', k={k}")
     query_vector = model.encode([query])[0]
@@ -131,10 +148,10 @@ def semantic_search(query, k=10):
     results = []
     for i, idx in enumerate(indices[0]):
         meta = metadata[idx]
-        content = read_document_chunk(meta["path"], meta["chunk_id"])
+        content = read_document_chunk(meta["abs_path"], meta["chunk_id"])
         results.append({
             "id": int(idx),
-            "path": meta["path"],
+            "path": meta["abs_path"],
             "content": content,
             "score": float(distances[0][i])
         })
@@ -142,20 +159,30 @@ def semantic_search(query, k=10):
     print(f"Found {len(results)} search results")
     return results
 
-# Answer generation function
 def generate_answer(query, context):
     print(f"Generating answer for query: '{query}'")
-    prompt = f"""Answer the user's question using the documents given in the context. In the context are documents that should contain an answer. Please always reference the document ID (in square brackets, for example [0],[1]) of the document that was used to make a claim. Use as many citations and documents as it is necessary to answer the question.
+    prompt = f"""Answer the user's question using ONLY the documents given in the context below. You MUST cite your sources using numbers in square brackets after EVERY piece of information (e.g., [0], [1], [2]).
 
-Context:
+Context (numbered documents):
 {context}
 
 Question: {query}
 
+Instructions:
+1. Use information ONLY from the provided documents
+2. You MUST cite sources using [X] format after EVERY claim
+3. Use multiple citations if information comes from multiple documents (e.g., [0][1])
+4. Make sure citations are numbers that match the context documents
+5. DO NOT skip citations - every piece of information needs a citation
+6. DO NOT make up information - only use what's in the documents
+
+Example format:
+The project started in 2020 [0] and had 5 team members [1]. They completed the first phase in March [0][2].
+
 Answer:"""
 
     print("Sending prompt to Ollama")
-    response = ollama.generate(model='tinyllama', prompt=prompt)
+    response = ollama.generate(model='phi3', prompt=prompt)
     print("Received response from Ollama")
     return response['response']
 
@@ -165,7 +192,6 @@ def load_lottieurl(url: str):
         return None
     return r.json()
 
-# Streamlit UI
 def main():
     global documents_path, index, metadata
     print("Starting Streamlit UI")
@@ -217,7 +243,7 @@ def main():
                 print(f"Indexing documents in {documents_path}")
                 index_documents(documents_path)
             st.success("✅ Indexing complete!")
-            st.rerun()  # Use st.rerun() instead of st.experimental_rerun()
+            st.rerun()
     
     # Load index and metadata if they exist
     if os.path.exists("document_index.faiss") and os.path.exists("metadata.json"):
@@ -248,25 +274,70 @@ def main():
                 # Generate answer
                 answer = generate_answer(question, context)
                 
+                # Print to command line
+                print("\n" + "="*80)
+                print("AI ANSWER:")
+                print("="*80)
+                print(answer)
+                print("\n" + "="*80)
+                print("REFERENCED DOCUMENTS:")
+                print("="*80)
+                
+                # Display in UI
                 st.markdown("### 🤖 AI Answer:")
                 st.markdown(answer)
                 
                 # Display referenced documents
                 st.markdown("### 📚 Referenced Documents:")
-                rege = re.compile(r"\[Document\s+[0-9]+\]|\[[0-9]+\]")
-                referenced_ids = [int(s) for s in re.findall(r'\b\d+\b', ' '.join(rege.findall(answer)))]
+                referenced_ids = set()
+                # Create a map of document content to citation numbers
+                content_to_citations = {}
                 
-                print(f"Displaying {len(referenced_ids)} referenced documents")
-                for doc_id in referenced_ids:
-                    doc = search_results[doc_id]
-                    full_path = os.path.join(documents_path, os.path.basename(doc['path']))
-                    if os.path.exists(full_path):
-                        with st.expander(f"📄 Document {doc_id} - {os.path.basename(doc['path'])}"):
-                            st.write(doc['content'])
-                            with open(full_path, 'rb') as f:
-                                st.download_button("⬇️ Download file", f, file_name=os.path.basename(doc['path']))
-                    else:
-                        st.warning(f"⚠️ File not found: {full_path}")
+                # First, collect all citations and their corresponding content
+                print("\nDebug: Searching for citations in answer:")
+                print(answer)
+                print("\nDebug: Found citation matches:")
+                for match in re.finditer(r'\[(\d+)\]', answer):
+                    try:
+                        doc_id = int(match.group(1))
+                        print(f"Found citation: [{doc_id}]")
+                        if doc_id < len(search_results):
+                            doc = search_results[doc_id]
+                            content_key = (doc['content'], doc['path'])
+                            if content_key not in content_to_citations:
+                                content_to_citations[content_key] = {doc_id}
+                                print(f"Added new document with citation [{doc_id}]")
+                            else:
+                                content_to_citations[content_key].add(doc_id)
+                                print(f"Added citation [{doc_id}] to existing document")
+                        else:
+                            print(f"Warning: Citation [{doc_id}] is out of range")
+                    except ValueError as e:
+                        print(f"Error parsing citation: {e}")
+                        continue
+
+                print(f"\nDebug: Found {len(content_to_citations)} unique referenced documents")
+                
+                # Display each unique document with all its citation numbers
+                for (content, path), citation_ids in content_to_citations.items():
+                    citation_str = ", ".join(f"[{i}]" for i in sorted(citation_ids))
+                    
+                    # Print to command line
+                    print(f"\nDocument {citation_str} - {os.path.basename(path)}")
+                    print("-" * 80)
+                    print(f"Content: {content}")
+                    print(f"Source: {path}")
+                    print("-" * 80)
+                    
+                    # Display in UI
+                    with st.expander(f"📄 Document {citation_str} - {os.path.basename(path)}"):
+                        st.write(content)
+                        st.write(f"Source: {path}")
+                        if os.path.exists(path):
+                            with open(path, 'rb') as f:
+                                st.download_button("⬇️ Download file", f, file_name=os.path.basename(path))
+                        else:
+                            st.warning(f"⚠️ File not found: {path}")
         else:
             st.warning("⚠️ Please enter a question before clicking 'Search and Answer'.")
 
