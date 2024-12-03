@@ -67,3 +67,7 @@ Contributions to improve Local GenAI Search are welcome! Please feel free to sub
 ## License
 
  MIT License
+
+ ## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=imanoop7/Generative-Search-Engine-For-Local-Files&type=Date)](https://star-history.com/#imanoop7/Generative-Search-Engine-For-Local-Files&Date)
