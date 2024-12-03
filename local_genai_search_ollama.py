@@ -20,7 +20,6 @@ metadata = []
 
 print(f"Initialized FAISS index with dimension {dimension}")
 
-# Document reading functions
 def read_pdf(file_path):
     print(f"Reading PDF: {file_path}")
     with open(file_path, 'rb') as file:
@@ -47,14 +46,20 @@ def chunk_text(text, chunk_size=500, overlap=50):
     print(f"Created {len(chunks)} chunks")
     return chunks
 
-# Indexing function
+def embed_text(text):
+    response = ollama.embeddings(model='nomic-embed-text', prompt=text)
+    return response['embedding']
+
 def index_documents(directory):
     print(f"Indexing documents in directory: {directory}")
     global metadata
     documents = []
     metadata = []  # Reset metadata
     
-    for root, _, files in os.walk(directory):
+    # Convert to absolute path
+    abs_directory = os.path.abspath(directory)
+    
+    for root, _, files in os.walk(abs_directory):
         for file in files:
             file_path = os.path.join(root, file)
             print(f"Processing file: {file_path}")
@@ -74,7 +79,14 @@ def index_documents(directory):
                 chunks = chunk_text(content)
                 for i, chunk in enumerate(chunks):
                     documents.append(chunk)
-                    metadata.append({"path": os.path.abspath(file_path), "chunk_id": i})
+                    # Store both absolute and relative paths
+                    rel_path = os.path.relpath(file_path, abs_directory)
+                    metadata.append({
+                        "abs_path": file_path,
+                        "rel_path": rel_path,
+                        "chunk_id": i,
+                        "base_dir": abs_directory
+                    })
     
     print(f"Encoding {len(documents)} document chunks")
     embeddings = [embed_text(doc) for doc in documents]
@@ -89,22 +101,45 @@ def index_documents(directory):
     
     print(f"Indexed {len(documents)} document chunks.")
 
-# Function to read document chunk
 def read_document_chunk(file_path, chunk_id):
     print(f"Reading document chunk: {file_path}, chunk_id: {chunk_id}")
     content = ""
+    
+    # Find the metadata entry for this file
+    matching_meta = None
+    for meta in metadata:
+        if meta["abs_path"] == file_path or meta["rel_path"] == os.path.basename(file_path):
+            matching_meta = meta
+            break
+    
+    if matching_meta:
+        # Try both absolute path and reconstructed path
+        try_paths = [
+            matching_meta["abs_path"],
+            os.path.join(matching_meta["base_dir"], matching_meta["rel_path"])
+        ]
+        
+        for try_path in try_paths:
+            if os.path.exists(try_path):
+                file_path = try_path
+                break
+        else:
+            print(f"File not found: {file_path}")
+            return f"[Content not available for {os.path.basename(file_path)}]"
+    
     if file_path.endswith('.pdf'):
         content = read_pdf(file_path)
     elif file_path.endswith('.docx'):
         content = read_docx(file_path)
-    elif file.endswith('.txt'):
+    elif file_path.endswith('.pptx'):
+        content = read_pptx(file_path)
+    elif file_path.endswith('.txt'):
         with open(file_path, 'r', encoding='utf-8') as f:
             content = f.read()
     
     chunks = chunk_text(content)
     return chunks[chunk_id] if chunk_id < len(chunks) else ""
 
-# Search function
 def semantic_search(query, k=10):
     print(f"Performing semantic search for query: '{query}', k={k}")
     query_vector = embed_text(query)
@@ -113,10 +148,10 @@ def semantic_search(query, k=10):
     results = []
     for i, idx in enumerate(indices[0]):
         meta = metadata[idx]
-        content = read_document_chunk(meta["path"], meta["chunk_id"])
+        content = read_document_chunk(meta["abs_path"], meta["chunk_id"])
         results.append({
             "id": int(idx),
-            "path": meta["path"],
+            "path": meta["abs_path"],
             "content": content,
             "score": float(distances[0][i])
         })
@@ -124,7 +159,6 @@ def semantic_search(query, k=10):
     print(f"Found {len(results)} search results")
     return results
 
-# Answer generation function
 def generate_answer(query, context):
     print(f"Generating answer for query: '{query}'")
     prompt = f"""Answer the user's question using the documents given in the context. In the context are documents that should contain an answer. Please always reference the document ID (in square brackets, for example [0],[1]) of the document that was used to make a claim. Use as many citations and documents as it is necessary to answer the question.
@@ -147,13 +181,8 @@ def load_lottieurl(url: str):
         return None
     return r.json()
 
-# Add this new function for text embedding
-def embed_text(text):
-    response = ollama.embeddings(model='nomic-embed-text', prompt=text)
-    return response['embedding']
-
-# Streamlit UI
 def main():
+    global documents_path, index, metadata
     print("Starting Streamlit UI")
     
     # Page config
@@ -204,7 +233,7 @@ def main():
                 print(f"Indexing documents in {documents_path}")
                 index_documents(documents_path)
             st.success("✅ Indexing complete!")
-            st.experimental_rerun()  # Rerun the app after indexing
+            st.rerun()
 
     # Load index and metadata if not already loaded
     global index, metadata
@@ -253,8 +282,11 @@ def main():
                     with st.expander(f"📄 Document {doc_id} - {os.path.basename(doc['path'])}"):
                         st.write(doc['content'])
                         st.write(f"Source: {doc['path']}")
-                        with open(doc['path'], 'rb') as f:
-                            st.download_button("⬇️ Download file", f, file_name=os.path.basename(doc['path']))
+                        if os.path.exists(doc['path']):
+                            with open(doc['path'], 'rb') as f:
+                                st.download_button("⬇️ Download file", f, file_name=os.path.basename(doc['path']))
+                        else:
+                            st.warning(f"⚠️ File not found: {doc['path']}")
         else:
             st.warning("⚠️ Please enter a question before clicking 'Search and Answer'.")
 
